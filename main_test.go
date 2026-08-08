@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"youtube-mcp/internal/tools"
 )
@@ -110,5 +113,37 @@ func TestProviderRebuildsAfterReauthentication(t *testing.T) {
 	}
 	if got != fresh {
 		t.Error("provider kept the stale client after re-authentication; recovery would need a restart")
+	}
+}
+
+// The HTTP mode must serve the same MCP server over streamable HTTP. Listing
+// tools exercises initialize + tools/list without touching YouTube auth (the
+// provider is lazy — nothing builds the client until a tool call).
+func TestHTTPHandlerServesMCP(t *testing.T) {
+	ts := httptest.NewServer(newHTTPHandler(newServer()))
+	defer ts.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint: ts.URL + "/mcp",
+	}, nil)
+	if err != nil {
+		t.Fatalf("connecting over streamable HTTP: %v", err)
+	}
+	defer session.Close()
+
+	result, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("listing tools: %v", err)
+	}
+
+	names := make(map[string]bool, len(result.Tools))
+	for _, tool := range result.Tools {
+		names[tool.Name] = true
+	}
+	for _, want := range []string{"list_playlists", "get_transcript"} {
+		if !names[want] {
+			t.Errorf("tool %q not exposed over HTTP; got %v", want, result.Tools)
+		}
 	}
 }
