@@ -6,7 +6,7 @@
 
 **Architecture:** `main.go` wires three internal packages: `internal/auth` (OAuth credential lifecycle), `internal/yt` (thin testable wrapper over the generated `youtube/v3` client), `internal/transcript` (isolated InnerTube caption fetcher). `internal/tools` defines the MCP tool surface against narrow interfaces so handlers are testable with fakes. Spec: `docs/superpowers/specs/2026-08-08-youtube-mcp-design.md`.
 
-**Tech Stack:** Go 1.25, `github.com/modelcontextprotocol/go-sdk` (official MCP SDK), `google.golang.org/api/youtube/v3`, `golang.org/x/oauth2`.
+**Tech Stack:** Go 1.26, `github.com/modelcontextprotocol/go-sdk` (official MCP SDK), `google.golang.org/api/youtube/v3`, `golang.org/x/oauth2`.
 
 **Conventions:** Module name is plain `youtube-mcp` (matches Bill's `indexer-go` convention). Tests use stdlib `testing` + `httptest` only — no assertion libraries. Every YouTube-API test drives the real generated client against an `httptest` server via `option.WithEndpoint`.
 
