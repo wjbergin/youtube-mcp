@@ -23,15 +23,27 @@ func newTestFetcher(t *testing.T, playerJSON func(baseURL string) string) *Fetch
 		}
 		var body struct {
 			VideoID string `json:"videoId"`
+			Context struct {
+				Client struct {
+					ClientName string `json:"clientName"`
+				} `json:"client"`
+			} `json:"context"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.VideoID == "" {
 			t.Errorf("player request missing videoId: %v", err)
 		}
+		// WEB-client player calls are PO-token-gated and report real videos as
+		// unavailable, so the fetcher must identify as the ANDROID client.
+		if name := body.Context.Client.ClientName; name != "ANDROID" {
+			t.Errorf("player request client name = %q, want ANDROID", name)
+		}
 		fmt.Fprint(w, playerJSON(srv.URL))
 	})
 	mux.HandleFunc("/timedtext", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("fmt") != "json3" {
-			t.Errorf("timedtext fetched without fmt=json3: %s", r.URL)
+		// Exactly one fmt param: YouTube honors the first occurrence, so an
+		// appended fmt=json3 behind the track's own fmt=srv3 is ignored.
+		if got := r.URL.Query()["fmt"]; len(got) != 1 || got[0] != "json3" {
+			t.Errorf("timedtext fmt params = %v, want exactly [json3]: %s", got, r.URL)
 		}
 		fmt.Fprint(w, sampleJSON3)
 	})
@@ -43,7 +55,7 @@ func TestFetchHappyPath(t *testing.T) {
 		return fmt.Sprintf(`{
 			"playabilityStatus": {"status": "OK"},
 			"captions": {"playerCaptionsTracklistRenderer": {"captionTracks": [
-				{"baseUrl": "%s/timedtext?v=abc", "languageCode": "en"}
+				{"baseUrl": "%s/timedtext?v=abc&fmt=srv3", "languageCode": "en"}
 			]}}}`, base)
 	})
 	got, err := f.Fetch(context.Background(), "abc123", "en", false)

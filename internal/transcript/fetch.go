@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"net/url"
 )
 
 const defaultPlayerURL = "https://www.youtube.com/youtubei/v1/player"
@@ -15,6 +15,9 @@ const defaultPlayerURL = "https://www.youtube.com/youtubei/v1/player"
 // Fetcher retrieves transcripts via YouTube's InnerTube player endpoint.
 // The endpoint is unofficial and unauthenticated; all knowledge of it is
 // confined to this package so a breakage is a one-package fix.
+//
+// Requests identify as the ANDROID client: WEB-client player calls are
+// PO-token-gated and report even plainly available videos as unavailable.
 type Fetcher struct {
 	HTTP      *http.Client
 	PlayerURL string
@@ -45,11 +48,14 @@ func (f *Fetcher) Fetch(ctx context.Context, videoID, lang string, withTimestamp
 	if err != nil {
 		return "", err
 	}
-	sep := "?"
-	if strings.Contains(track.BaseURL, "?") {
-		sep = "&"
+	u, err := url.Parse(track.BaseURL)
+	if err != nil {
+		return "", fmt.Errorf("caption track URL: %w", err)
 	}
-	data, err := f.get(ctx, track.BaseURL+sep+"fmt=json3")
+	q := u.Query()
+	q.Set("fmt", "json3") // replaces any existing fmt (ANDROID URLs carry fmt=srv3)
+	u.RawQuery = q.Encode()
+	data, err := f.get(ctx, u.String())
 	if err != nil {
 		return "", fmt.Errorf("fetching caption track: %w", err)
 	}
@@ -60,8 +66,11 @@ func (f *Fetcher) fetchTracks(ctx context.Context, videoID string) ([]captionTra
 	body, err := json.Marshal(map[string]any{
 		"context": map[string]any{
 			"client": map[string]any{
-				"clientName":    "WEB",
-				"clientVersion": "2.20250101.00.00",
+				"clientName":        "ANDROID",
+				"clientVersion":     "20.10.38",
+				"androidSdkVersion": 30,
+				"hl":                "en",
+				"gl":                "US",
 			},
 		},
 		"videoId": videoID,
