@@ -9,6 +9,7 @@ const sampleJSON3 = `{
   "events": [
     {"tStartMs": 0, "dDurationMs": 1000},
     {"tStartMs": 1000, "segs": [{"utf8": "Hello"}, {"utf8": " world"}]},
+    {"tStartMs": 3200, "aAppend": 1, "segs": [{"utf8": "\n"}]},
     {"tStartMs": 65000, "segs": [{"utf8": "second\nline"}]},
     {"tStartMs": 3661000, "segs": [{"utf8": "an hour in"}]}
   ]

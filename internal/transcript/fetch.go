@@ -1,3 +1,5 @@
+// Package transcript retrieves YouTube video transcripts via the unofficial
+// InnerTube endpoint.
 package transcript
 
 import (
@@ -8,9 +10,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 )
 
-const defaultPlayerURL = "https://www.youtube.com/youtubei/v1/player"
+const (
+	defaultPlayerURL = "https://www.youtube.com/youtubei/v1/player"
+	defaultTimeout   = 30 * time.Second
+)
 
 // Fetcher retrieves transcripts via YouTube's InnerTube player endpoint.
 // The endpoint is unofficial and unauthenticated; all knowledge of it is
@@ -18,13 +24,31 @@ const defaultPlayerURL = "https://www.youtube.com/youtubei/v1/player"
 //
 // Requests identify as the ANDROID client: WEB-client player calls are
 // PO-token-gated and report even plainly available videos as unavailable.
+//
+// The zero value is usable; HTTP and PlayerURL fall back to defaults.
 type Fetcher struct {
 	HTTP      *http.Client
 	PlayerURL string
 }
 
+// New returns a Fetcher pointing at the live InnerTube endpoint, with a
+// request timeout so a stalled connection cannot hang a tool call.
 func New() *Fetcher {
-	return &Fetcher{HTTP: http.DefaultClient, PlayerURL: defaultPlayerURL}
+	return &Fetcher{HTTP: &http.Client{Timeout: defaultTimeout}, PlayerURL: defaultPlayerURL}
+}
+
+func (f *Fetcher) client() *http.Client {
+	if f.HTTP == nil {
+		return http.DefaultClient
+	}
+	return f.HTTP
+}
+
+func (f *Fetcher) playerURL() string {
+	if f.PlayerURL == "" {
+		return defaultPlayerURL
+	}
+	return f.PlayerURL
 }
 
 type playerResponse struct {
@@ -39,6 +63,19 @@ type playerResponse struct {
 	} `json:"captions"`
 }
 
+// Fetch returns the transcript of videoID as plain text, one line per caption
+// event.
+//
+// lang is a BCP-47 tag such as "en" or "pt-BR". An exact tag match wins; if
+// none exists, matching falls back to the base language, so "en" accepts a
+// track coded "en-GB". Human-made captions are preferred over auto-generated
+// ones. With withTimestamps, each line is prefixed [m:ss] (or [h:mm:ss] past
+// an hour).
+//
+// Three errors are actionable by the caller: a video with no captions at all,
+// a video that is unavailable or restricted (the message carries YouTube's
+// reason), and a request for a language the video lacks (the message lists the
+// available tracks, marking auto-generated ones).
 func (f *Fetcher) Fetch(ctx context.Context, videoID, lang string, withTimestamps bool) (string, error) {
 	tracks, err := f.fetchTracks(ctx, videoID)
 	if err != nil {
@@ -78,12 +115,12 @@ func (f *Fetcher) fetchTracks(ctx context.Context, videoID string) ([]captionTra
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.PlayerURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.playerURL(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := f.HTTP.Do(req)
+	resp, err := f.client().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("calling player endpoint: %w", err)
 	}
@@ -117,7 +154,7 @@ func (f *Fetcher) get(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := f.HTTP.Do(req)
+	resp, err := f.client().Do(req)
 	if err != nil {
 		return nil, err
 	}

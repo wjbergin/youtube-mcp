@@ -90,7 +90,7 @@ All parameter schemas derived from Go structs by the SDK. `?` = optional.
 | `remove_video_from_playlist` | `playlist_id`, `video_id` | Resolves matching playlist-item ids internally; removes **all** occurrences of the video and reports the count |
 | `search_videos` | `query`, `max_results?` (default 10, ≤50) | Official search; returns video id, title, channel, published date |
 | `get_video` | `video_id` | Title, channel, duration, view/like counts, description |
-| `get_transcript` | `video_id`, `language?` (default `en`), `with_timestamps?` (default false) | Plain text; timestamps as `[mm:ss]` prefixes when requested |
+| `get_transcript` | `video_id`, `language?` (default `en`), `with_timestamps?` (default false) | Plain text; timestamps as `[m:ss]` / `[h:mm:ss]` prefixes when requested |
 
 ### Quota notes
 

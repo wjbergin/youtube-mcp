@@ -12,28 +12,44 @@ type captionTrack struct {
 	Kind         string `json:"kind"` // "asr" means auto-generated
 }
 
-// selectTrack picks the caption track for lang, preferring human-made captions
-// over auto-generated ones. Language matching ignores region subtags, so
-// lang "en" matches a track coded "en-GB".
+// selectTrack picks the caption track for lang. An exact (case-insensitive)
+// match on the full language tag wins, so lang "pt-BR" selects the Brazilian
+// track over "pt-PT"; only when no exact match exists does matching fall back
+// to the base language, so lang "en" still matches a track coded "en-GB".
+// Within each tier, human-made captions beat auto-generated ones.
 func selectTrack(tracks []captionTrack, lang string) (captionTrack, error) {
 	if len(tracks) == 0 {
 		return captionTrack{}, fmt.Errorf("video has no captions")
 	}
-	var matches []captionTrack
+	var exact, base []captionTrack
 	for _, tr := range tracks {
-		if baseLang(tr.LanguageCode) == baseLang(lang) {
-			matches = append(matches, tr)
+		switch {
+		case strings.EqualFold(tr.LanguageCode, lang):
+			exact = append(exact, tr)
+		case baseLang(tr.LanguageCode) == baseLang(lang):
+			base = append(base, tr)
 		}
 	}
-	if len(matches) == 0 {
-		return captionTrack{}, fmt.Errorf("no %q captions for this video; available: %s", lang, availableLanguages(tracks))
-	}
-	for _, tr := range matches {
-		if tr.Kind != "asr" {
+	for _, tier := range [][]captionTrack{exact, base} {
+		if tr, ok := preferHuman(tier); ok {
 			return tr, nil
 		}
 	}
-	return matches[0], nil
+	return captionTrack{}, fmt.Errorf("no %q captions for this video; available: %s", lang, availableLanguages(tracks))
+}
+
+// preferHuman returns the first non-ASR track, or the first track of any kind
+// if every match is auto-generated. ok is false for an empty tier.
+func preferHuman(tracks []captionTrack) (tr captionTrack, ok bool) {
+	if len(tracks) == 0 {
+		return captionTrack{}, false
+	}
+	for _, tr := range tracks {
+		if tr.Kind != "asr" {
+			return tr, true
+		}
+	}
+	return tracks[0], true
 }
 
 func baseLang(code string) string {
