@@ -1,0 +1,6 @@
+github.com/modelcontextprotocol/go-sdk v1.7.0 h1:yqjY2dsbKAC0LSuWZVBMrHgiG8ukXv6NRo0JiALay44=
+github.com/modelcontextprotocol/go-sdk v1.7.0/go.mod h1:dL7u98E/zjJTGzEq+j30jQ8K2k1mb6LeAH4inEcSGts=
+golang.org/x/oauth2 v0.36.0 h1:peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=
+golang.org/x/oauth2 v0.36.0/go.mod h1:YDBUJMTkDnJS+A4BP4eZBjCqtokkg1hODuPjwiGPO7Q=
+google.golang.org/api v0.292.0 h1:Ewiwo/GTtiaPZSNAZQUcWLh8AYDEoPmIXyJfeoTSMHU=
+google.golang.org/api v0.292.0/go.mod h1:07kjmMnFGm2RQuCza2EZM/5N68G/fVvFb1xKjWqoFA0=
