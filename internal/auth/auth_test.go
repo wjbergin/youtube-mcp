@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,5 +117,51 @@ func TestRandomState(t *testing.T) {
 	}
 	if first == "" || first == second {
 		t.Errorf("OAuth states must be non-empty and unique: %q, %q", first, second)
+	}
+}
+
+func TestCallbackHandlerAcceptsAuthorizationCode(t *testing.T) {
+	results := make(chan callbackResult, 1)
+	request := httptest.NewRequest(http.MethodGet, "/?state=expected&code=auth-code", nil)
+	response := httptest.NewRecorder()
+	callbackHandler("expected", results).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	result := <-results
+	if result.code != "auth-code" || result.err != nil {
+		t.Errorf("callback result = %+v", result)
+	}
+}
+
+func TestCallbackHandlerReportsDenial(t *testing.T) {
+	results := make(chan callbackResult, 1)
+	request := httptest.NewRequest(http.MethodGet, "/?state=expected&error=access_denied", nil)
+	response := httptest.NewRecorder()
+	callbackHandler("expected", results).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.Code)
+	}
+	result := <-results
+	if result.err == nil || !strings.Contains(result.err.Error(), "access_denied") {
+		t.Errorf("callback result = %+v", result)
+	}
+}
+
+func TestCallbackHandlerRejectsInvalidStateWithoutEndingFlow(t *testing.T) {
+	results := make(chan callbackResult, 1)
+	request := httptest.NewRequest(http.MethodGet, "/?state=wrong&code=auth-code", nil)
+	response := httptest.NewRecorder()
+	callbackHandler("expected", results).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", response.Code)
+	}
+	select {
+	case result := <-results:
+		t.Fatalf("invalid state ended the auth flow: %+v", result)
+	default:
 	}
 }

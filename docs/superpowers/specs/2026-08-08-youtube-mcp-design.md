@@ -49,7 +49,7 @@ The only fully custom network code is the transcript fetcher.
 youtube-mcp/
   main.go               # subcommands: `serve` (default, stdio MCP) and `auth`
   internal/auth/        # credentials.json + token.json loading, first-run flow
-  internal/youtube/     # thin wrapper over the generated youtube/v3 client
+  internal/yt/          # thin wrapper over the generated youtube/v3 client
   internal/transcript/  # InnerTube caption fetcher (no auth)
   docs/
 ```

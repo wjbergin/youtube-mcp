@@ -159,30 +159,13 @@ func RunAuthFlow(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	codeCh := make(chan string, 1)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("state") != state {
-			http.Error(w, "invalid OAuth state", http.StatusBadRequest)
-			return
-		}
-		if oauthErr := request.URL.Query().Get("error"); oauthErr != "" {
-			http.Error(w, "authorization failed: "+oauthErr, http.StatusBadRequest)
-			return
-		}
-		code := request.URL.Query().Get("code")
-		if code == "" {
-			http.Error(w, "missing authorization code", http.StatusBadRequest)
-			return
-		}
-		select {
-		case codeCh <- code:
-			fmt.Fprintln(w, "Authorized. You can close this tab.")
-		default:
-			fmt.Fprintln(w, "Authorization was already received. You can close this tab.")
-		}
-	})}
+	resultCh := make(chan callbackResult, 1)
+	server := &http.Server{Handler: callbackHandler(state, resultCh)}
+	serveErrCh := make(chan error, 1)
 	go func() {
-		_ = server.Serve(listener)
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErrCh <- fmt.Errorf("serving OAuth callback: %w", err)
+		}
 	}()
 	defer server.Close()
 
@@ -190,13 +173,18 @@ func RunAuthFlow(ctx context.Context) error {
 	fmt.Fprintf(os.Stderr, "Opening browser for authorization...\nIf it doesn't open, visit:\n%s\n", authURL)
 	openBrowser(authURL)
 
-	var code string
+	var result callbackResult
 	select {
-	case code = <-codeCh:
+	case result = <-resultCh:
+		if result.err != nil {
+			return result.err
+		}
+	case err := <-serveErrCh:
+		return err
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	token, err := config.Exchange(ctx, code)
+	token, err := config.Exchange(ctx, result.code)
 	if err != nil {
 		return fmt.Errorf("exchanging authorization code: %w", err)
 	}
@@ -205,6 +193,49 @@ func RunAuthFlow(ctx context.Context) error {
 	}
 	fmt.Fprintln(os.Stderr, "Token saved. youtube-mcp is ready to use.")
 	return nil
+}
+
+type callbackResult struct {
+	code string
+	err  error
+}
+
+func callbackHandler(expectedState string, results chan<- callbackResult) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("state") != expectedState {
+			http.Error(w, "invalid OAuth state", http.StatusBadRequest)
+			return
+		}
+
+		if oauthErr := request.URL.Query().Get("error"); oauthErr != "" {
+			result := callbackResult{err: fmt.Errorf("authorization failed: %s", oauthErr)}
+			deliverCallbackResult(results, result)
+			http.Error(w, result.err.Error(), http.StatusBadRequest)
+			return
+		}
+		code := request.URL.Query().Get("code")
+		if code == "" {
+			result := callbackResult{err: fmt.Errorf("authorization callback did not include a code")}
+			deliverCallbackResult(results, result)
+			http.Error(w, result.err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if deliverCallbackResult(results, callbackResult{code: code}) {
+			fmt.Fprintln(w, "Authorized. You can close this tab.")
+			return
+		}
+		fmt.Fprintln(w, "Authorization was already received. You can close this tab.")
+	})
+}
+
+func deliverCallbackResult(results chan<- callbackResult, result callbackResult) bool {
+	select {
+	case results <- result:
+		return true
+	default:
+		return false
+	}
 }
 
 func randomState() (string, error) {
