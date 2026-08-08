@@ -1,0 +1,95 @@
+# youtube-mcp
+
+A Go MCP server for managing YouTube playlists and fetching video transcripts
+from Claude.
+
+Available tools: `list_playlists`, `create_playlist`, `update_playlist`,
+`delete_playlist`, `list_playlist_items`, `add_video_to_playlist`,
+`remove_video_from_playlist`, `search_videos`, `get_video`, and
+`get_transcript`.
+
+Playlist and video operations use the official YouTube Data API v3 with OAuth.
+Transcripts use YouTube's public caption endpoint and do not require
+authentication.
+
+Watch Later is intentionally not included. The official API has not exposed
+the `WL` playlist since 2016, so this server cannot read or clear it.
+
+## Setup
+
+### 1. Create Google credentials
+
+This is a one-time setup and usually takes about five minutes.
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/) and create
+   a project, such as `youtube-mcp`.
+2. Go to **APIs & Services → Library**, find **YouTube Data API v3**, and enable
+   it.
+3. Configure the **OAuth consent screen**. Choose **External**, provide the app
+   name and your email, and add yourself as a test user if the app remains in
+   testing mode.
+4. Go to **APIs & Services → Credentials → Create Credentials → OAuth client
+   ID** and choose **Desktop app**.
+5. Download the client JSON and save it as:
+
+   ```text
+   ~/.config/youtube-mcp/credentials.json
+   ```
+
+### 2. Build and authenticate
+
+The project requires Go 1.26 or newer.
+
+```bash
+go build -o youtube-mcp .
+./youtube-mcp auth
+```
+
+The auth command opens a browser for consent. The resulting token is stored at
+`~/.config/youtube-mcp/token.json` with private file permissions and refreshes
+automatically.
+
+### 3. Register with Claude Code
+
+Use the absolute path to the binary you built:
+
+```bash
+claude mcp add youtube -- /absolute/path/to/youtube-mcp
+```
+
+Running the binary without a subcommand defaults to its stdio MCP server. You
+can also run that mode explicitly with `youtube-mcp serve`.
+
+## Development
+
+Run the local verification suite with:
+
+```bash
+go build ./...
+go vet ./...
+go test ./...
+```
+
+A live smoke test is available after authentication. It creates and deletes a
+temporary private playlist in the authenticated account and also calls the
+unofficial transcript endpoint:
+
+```bash
+go test -tags smoke ./smoke -v
+```
+
+## Quota
+
+The Data API's default free quota is 10,000 units per day. Reads generally cost
+1 unit, playlist mutations cost 50, and each `search_videos` call costs 100.
+Transcript fetching bypasses the Data API and consumes no API quota. Quota
+exhaustion is returned as a tool error and resets at midnight Pacific time.
+
+## Caveats
+
+- The transcript endpoint is unofficial. Its implementation is isolated in
+  `internal/transcript` so an upstream change remains a one-package fix.
+- Age-restricted, private, or region-locked videos may refuse transcript
+  fetching.
+- Playlist deletion is permanent; its tool description marks it as
+  destructive.
