@@ -100,12 +100,15 @@ a crash. Transcripts cost no quota (they bypass the Data API).
 
 ## Transcript mechanism
 
-1. POST to InnerTube `player` endpoint with the public web client context — no
-   user credentials.
+1. POST to InnerTube `player` endpoint with the **ANDROID client context** — no
+   user credentials. (Discovered during implementation: WEB-client player calls
+   are PO-token-gated and return UNPLAYABLE; the ANDROID client works.)
 2. Read `captions.playerCaptionsTracklistRenderer.captionTracks`.
 3. Pick the requested language, preferring a human-made track over
    auto-generated (`kind == "asr"`).
-4. Fetch the track's `baseUrl` with `fmt=json3`; flatten events to text.
+4. Fetch the track's `baseUrl` with the `fmt` query param **replaced** by
+   `json3` (ANDROID URLs already carry `fmt=srv3`, and YouTube honors the first
+   occurrence); flatten events to text.
 
 If the requested language is missing, the error lists the languages that exist
 so the model can retry. Known limitation: age-restricted or region-locked videos

@@ -362,7 +362,9 @@ git commit -m "feat: select caption track by language, preferring human captions
 - Create: `internal/transcript/fetch.go`
 - Test: `internal/transcript/fetch_test.go`
 
-The fetcher POSTs to the InnerTube `player` endpoint (no auth, WEB client context), reads `captions.playerCaptionsTracklistRenderer.captionTracks`, then GETs the chosen track's `baseUrl` with `fmt=json3` appended. Both URLs are overridable so tests hit an `httptest` server.
+The fetcher POSTs to the InnerTube `player` endpoint (no auth), reads `captions.playerCaptionsTracklistRenderer.captionTracks`, then GETs the chosen track's `baseUrl` with `fmt=json3`. Both URLs are overridable so tests hit an `httptest` server.
+
+> **Amendment (2026-08-08, during execution):** live probing showed the WEB client context returns UNPLAYABLE (PO-token gating) — the shipped code uses the **ANDROID client context** (`clientName: ANDROID, clientVersion: 20.10.38, androidSdkVersion: 30, hl: en, gl: US`) instead of the WEB context shown below. Additionally, ANDROID caption `baseUrl`s already carry `fmt=srv3` and YouTube honors the first `fmt` param, so the shipped code **replaces** `fmt` via `net/url` rather than appending `&fmt=json3` as shown below. The code blocks below are the original pre-execution plan.
 
 - [ ] **Step 1: Write the failing test**
 
