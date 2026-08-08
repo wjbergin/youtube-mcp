@@ -8,6 +8,12 @@
 
 **Tech Stack:** Go 1.26, `github.com/modelcontextprotocol/go-sdk` (official MCP SDK), `google.golang.org/api/youtube/v3`, `golang.org/x/oauth2`.
 
+**Implementation status (2026-08-08):** Tasks 1–12 are implemented on
+`feat/implementation`. Build, vet, unit tests, race tests, the stdio MCP
+handshake, and the read-only live transcript smoke test pass. Browser OAuth,
+the account-mutating playlist smoke test, and Claude Code registration remain
+explicit manual checks because they require the user's credentials/account.
+
 **Conventions:** Module name is plain `youtube-mcp` (matches Bill's `indexer-go` convention). Tests use stdlib `testing` + `httptest` only — no assertion libraries. Every YouTube-API test drives the real generated client against an `httptest` server via `option.WithEndpoint`.
 
 ---
@@ -19,7 +25,7 @@
 - Create: `main.go`
 - Create: `.gitignore`
 
-- [ ] **Step 1: Init module and fetch dependencies**
+- [x] **Step 1: Init module and fetch dependencies**
 
 ```bash
 cd /Users/bill/work/youtube-mcp
@@ -31,7 +37,7 @@ go get golang.org/x/oauth2@latest
 
 Expected: `go.mod` created listing all three dependencies.
 
-- [ ] **Step 2: Write placeholder main.go** (replaced in Task 11)
+- [x] **Step 2: Write placeholder main.go** (replaced in Task 11)
 
 ```go
 // youtube-mcp is an MCP server for managing YouTube playlists and fetching
@@ -45,7 +51,7 @@ func main() {
 }
 ```
 
-- [ ] **Step 3: Write .gitignore**
+- [x] **Step 3: Write .gitignore**
 
 ```gitignore
 /youtube-mcp
@@ -53,12 +59,12 @@ func main() {
 
 (The built binary lands in the repo root with the same name as the module.)
 
-- [ ] **Step 4: Verify it builds**
+- [x] **Step 4: Verify it builds**
 
 Run: `go build ./... && go vet ./...`
 Expected: no output, exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add go.mod go.sum main.go .gitignore
@@ -75,7 +81,7 @@ git commit -m "chore: scaffold Go module with MCP and YouTube API dependencies"
 
 YouTube caption tracks fetched with `fmt=json3` return `{"events":[{"tStartMs":N,"segs":[{"utf8":"text"}]}]}`. Events without `segs` are styling/window events and must be skipped. Newlines inside segments become spaces.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package transcript
@@ -124,12 +130,12 @@ func TestParseJSON3Empty(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/transcript/`
 Expected: FAIL — `undefined: parseJSON3`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```go
 package transcript
@@ -191,12 +197,12 @@ func formatTimestamp(ms int64) string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/transcript/`
 Expected: `ok  youtube-mcp/internal/transcript`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/transcript/
@@ -213,7 +219,7 @@ git commit -m "feat: parse json3 caption documents into plain text"
 
 Rules from the spec: match language ignoring region subtags (`en` matches `en-GB`), prefer human-made captions over auto-generated (`kind == "asr"`), and when the language is missing, the error must list what IS available.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package transcript
@@ -278,12 +284,12 @@ func TestSelectTrackNoCaptions(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/transcript/`
 Expected: FAIL — `undefined: captionTrack`, `undefined: selectTrack`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```go
 package transcript
@@ -342,12 +348,12 @@ func availableLanguages(tracks []captionTrack) string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/transcript/`
 Expected: `ok  youtube-mcp/internal/transcript`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/transcript/
@@ -366,7 +372,7 @@ The fetcher POSTs to the InnerTube `player` endpoint (no auth), reads `captions.
 
 > **Amendment (2026-08-08, during execution):** live probing showed the WEB client context returns UNPLAYABLE (PO-token gating) — the shipped code uses the **ANDROID client context** (`clientName: ANDROID, clientVersion: 20.10.38, androidSdkVersion: 30, hl: en, gl: US`) instead of the WEB context shown below. Additionally, ANDROID caption `baseUrl`s already carry `fmt=srv3` and YouTube honors the first `fmt` param, so the shipped code **replaces** `fmt` via `net/url` rather than appending `&fmt=json3` as shown below. The code blocks below are the original pre-execution plan.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package transcript
@@ -447,12 +453,12 @@ func TestFetchNoCaptions(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/transcript/`
 Expected: FAIL — `undefined: Fetcher`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```go
 package transcript
@@ -577,12 +583,12 @@ func (f *Fetcher) get(ctx context.Context, url string) ([]byte, error) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/transcript/`
 Expected: `ok  youtube-mcp/internal/transcript`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/transcript/
@@ -599,7 +605,7 @@ git commit -m "feat: fetch transcripts via InnerTube player endpoint"
 
 Per the spec's error table: quota exhaustion, 404, and auth failures must come back as plain-language, actionable messages. Everything else passes through with code + message.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package yt
@@ -658,12 +664,12 @@ func TestFriendlyErrorNil(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/yt/`
 Expected: FAIL — `undefined: friendlyError`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```go
 // Package yt wraps the generated YouTube Data API client behind a small,
@@ -712,12 +718,12 @@ func hasReason(gerr *googleapi.Error, reason string) bool {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/yt/`
 Expected: `ok  youtube-mcp/internal/yt`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/yt/
@@ -735,7 +741,7 @@ git commit -m "feat: map YouTube API errors to actionable messages"
 
 The generated client is pointed at an `httptest` server via `option.WithEndpoint`. With the endpoint overridden, the client requests paths like `/youtube/v3/playlists` — register mux handlers on those exact paths. The key behavior to test is **update-merge**: the API replaces the whole snippet on update, so `UpdatePlaylist` must first fetch the current snippet and only overwrite the fields the caller provided.
 
-- [ ] **Step 1: Write client.go (types + constructor — no test yet, exercised by every test in this package)**
+- [x] **Step 1: Write client.go (types + constructor — no test yet, exercised by every test in this package)**
 
 ```go
 package yt
@@ -801,7 +807,7 @@ func playlistURL(id string) string {
 }
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```go
 package yt
@@ -948,12 +954,12 @@ func TestDeletePlaylist(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `go test ./internal/yt/`
 Expected: FAIL — `undefined: New` (and the playlist methods)
 
-- [ ] **Step 4: Write playlists.go**
+- [x] **Step 4: Write playlists.go**
 
 ```go
 package yt
@@ -1047,12 +1053,12 @@ func fromAPIPlaylist(p *ytapi.Playlist) Playlist {
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `go test ./internal/yt/`
 Expected: `ok  youtube-mcp/internal/yt`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/yt/
@@ -1069,7 +1075,7 @@ git commit -m "feat: playlist CRUD with merge-on-update semantics"
 
 `RemoveVideo` takes a video id (not a playlist-item id), pages through the whole playlist to find every occurrence, deletes them all, and returns the count. A video not present is an error, not a silent zero. Adding at an explicit position 0 requires `ForceSendFields` because the generated struct tags are `omitempty`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package yt
@@ -1176,12 +1182,12 @@ func TestRemoveVideoNotInPlaylist(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/yt/`
 Expected: FAIL — `undefined` methods `ListPlaylistItems`, `AddVideo`, `RemoveVideo`
 
-- [ ] **Step 3: Write items.go**
+- [x] **Step 3: Write items.go**
 
 ```go
 package yt
@@ -1273,12 +1279,12 @@ func fromAPIItem(it *ytapi.PlaylistItem) PlaylistItem {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/yt/`
 Expected: `ok  youtube-mcp/internal/yt`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/yt/
@@ -1295,7 +1301,7 @@ git commit -m "feat: playlist item listing, adding, and remove-all-occurrences"
 
 `GetVideo` converts the API's ISO 8601 duration (`PT1H2M3S`) to a human-readable `1:02:03`. `SearchVideos` clamps `max_results` to [1, 50] with a default of 10 (search costs 100 quota units — don't over-fetch by default).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package yt
@@ -1381,12 +1387,12 @@ func TestHumanDuration(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/yt/`
 Expected: FAIL — `undefined: humanDuration` and the two methods
 
-- [ ] **Step 3: Write videos.go**
+- [x] **Step 3: Write videos.go**
 
 ```go
 package yt
@@ -1478,12 +1484,12 @@ func zeroIfEmpty(s string) string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/yt/`
 Expected: `ok  youtube-mcp/internal/yt`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/yt/
@@ -1500,7 +1506,7 @@ git commit -m "feat: video search and details with human-readable durations"
 
 `Dir` is a package variable so tests can point it at `t.TempDir()`. The browser consent flow itself can't be unit-tested — it's covered by the manual smoke test in Task 12. Token round-trip, missing-file messages, and file permissions ARE unit-tested.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package auth
@@ -1557,12 +1563,12 @@ func TestLoadOAuthConfigMissingMentionsConsole(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/auth/`
 Expected: FAIL — `undefined: Dir`, `SaveToken`, `LoadToken`, `LoadOAuthConfig`
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```go
 // Package auth handles the OAuth credential lifecycle: a one-time browser
@@ -1739,12 +1745,12 @@ func openBrowser(url string) {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/auth/`
 Expected: `ok  youtube-mcp/internal/auth`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/auth/
@@ -1761,7 +1767,7 @@ git commit -m "feat: OAuth credential lifecycle with loopback consent flow"
 
 Handlers depend on a `Service` interface (implemented by `*yt.Client`) obtained through a `Provider` func, so the server can start unauthenticated and return instructive errors until `youtube-mcp auth` has been run. Tests connect a real MCP client over `mcp.NewInMemoryTransports()`, which also validates schema generation end to end.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 package tools
@@ -1932,12 +1938,12 @@ func TestUnauthenticatedProviderReturnsToolError(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `go test ./internal/tools/`
 Expected: FAIL — `undefined: Service`, `Provider`, `Register`
 
-- [ ] **Step 3: Write tools.go**
+- [x] **Step 3: Write tools.go**
 
 ```go
 // Package tools defines the MCP tool surface. Handlers depend on narrow
@@ -2209,19 +2215,19 @@ func Register(server *mcp.Server, provider Provider, transcripts TranscriptFetch
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `go test ./internal/tools/`
 Expected: `ok  youtube-mcp/internal/tools`
 
 Note: `TestAllTenToolsRegistered` expects alphabetical order. If the SDK preserves registration order instead, sort `got` before comparing — the assertion that matters is the exact set of 10 names.
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `go test ./...`
 Expected: all packages `ok`
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/tools/
@@ -2235,7 +2241,7 @@ git commit -m "feat: register all ten MCP tools against service interfaces"
 **Files:**
 - Modify: `main.go` (replace the Task 1 placeholder entirely)
 
-- [ ] **Step 1: Write the real main.go**
+- [x] **Step 1: Write the real main.go**
 
 ```go
 // youtube-mcp is an MCP server for managing YouTube playlists and fetching
@@ -2318,12 +2324,12 @@ func newProvider() tools.Provider {
 }
 ```
 
-- [ ] **Step 2: Build and vet**
+- [x] **Step 2: Build and vet**
 
 Run: `go build ./... && go vet ./... && go test ./...`
 Expected: clean build, all tests `ok`
 
-- [ ] **Step 3: Verify the stdio handshake**
+- [x] **Step 3: Verify the stdio handshake**
 
 ```bash
 go build -o youtube-mcp .
@@ -2332,7 +2338,7 @@ go build -o youtube-mcp .
 
 Expected: one JSON-RPC response line on stdout containing `"name":"youtube-mcp"`. The process exits when stdin closes.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add main.go
@@ -2347,7 +2353,7 @@ git commit -m "feat: wire serve and auth subcommands with lazy authenticated cli
 - Create: `README.md`
 - Create: `smoke/smoke_test.go`
 
-- [ ] **Step 1: Write README.md**
+- [x] **Step 1: Write README.md**
 
 ````markdown
 # youtube-mcp
@@ -2408,7 +2414,7 @@ Pacific.
 - Age-restricted or region-locked videos may refuse transcript fetches.
 ````
 
-- [ ] **Step 2: Write the smoke test** (build-tag gated; touches the real API with your real account)
+- [x] **Step 2: Write the smoke test** (build-tag gated; touches the real API with your real account)
 
 ```go
 //go:build smoke
@@ -2488,12 +2494,12 @@ func TestLiveTranscript(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Verify the smoke package compiles but is excluded normally**
+- [x] **Step 3: Verify the smoke package compiles but is excluded normally**
 
 Run: `go vet -tags smoke ./smoke && go test ./...`
 Expected: vet clean; the normal test run does NOT include the smoke package.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add README.md smoke/
