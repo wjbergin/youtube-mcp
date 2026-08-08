@@ -63,10 +63,10 @@ can also run that mode explicitly with `youtube-mcp serve`.
 ## Remote (HTTP)
 
 `serve --http <addr>` serves the same MCP server over Streamable HTTP at
-`/mcp` instead of stdio:
+`/mcp` instead of stdio. Scope the bind address to a trusted interface:
 
 ```bash
-./youtube-mcp serve --http :8080
+./youtube-mcp serve --http <tailscale-ip>:8080
 ```
 
 There is no authentication on the HTTP endpoint — run it only on a network
