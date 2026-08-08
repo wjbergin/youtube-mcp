@@ -90,6 +90,53 @@ func TestRemoveVideoAllOccurrences(t *testing.T) {
 	}
 }
 
+func TestListPlaylistItemsClampsMaxResults(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/youtube/v3/playlistItems", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("maxResults"); got != "50" {
+			t.Errorf("maxResults %q, want capped value 50", got)
+		}
+		fmt.Fprint(w, `{"items": []}`)
+	})
+	if _, _, err := testClient(t, mux).ListPlaylistItems(context.Background(), "PL1", 100, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A delete that fails part-way through has still changed the playlist, so the
+// count and the message must report the entries that were actually removed.
+func TestRemoveVideoReportsPartialProgress(t *testing.T) {
+	deletes := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/youtube/v3/playlistItems", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"items": [
+				{"id": "i1", "snippet": {"resourceId": {"videoId": "target"}}},
+				{"id": "i2", "snippet": {"resourceId": {"videoId": "target"}}}
+			]}`)
+		case http.MethodDelete:
+			deletes++
+			if deletes == 2 {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprint(w, `{"error": {"code": 500, "message": "backend error"}}`)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+	n, err := testClient(t, mux).RemoveVideo(context.Background(), "PL1", "target")
+	if err == nil {
+		t.Fatal("expected the failed deletion to be reported")
+	}
+	if n != 1 {
+		t.Errorf("removed count = %d, want the 1 entry that was actually deleted", n)
+	}
+	if !strings.Contains(err.Error(), "removed 1 of 2") {
+		t.Errorf("error must state partial progress, got: %v", err)
+	}
+}
+
 func TestRemoveVideoNotInPlaylist(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/youtube/v3/playlistItems", func(w http.ResponseWriter, r *http.Request) {

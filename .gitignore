@@ -1,1 +1,7 @@
+# The built binary shares its name with the module and lands in the repo root.
 /youtube-mcp
+
+# OAuth credentials live in ~/.config/youtube-mcp/. These patterns are a
+# backstop against a stray copy landing here and being committed.
+credentials.json
+token.json

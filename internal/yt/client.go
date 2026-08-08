@@ -59,3 +59,17 @@ type Video struct {
 func playlistURL(id string) string {
 	return "https://www.youtube.com/playlist?list=" + id
 }
+
+// maxPageSize is the largest maxResults the Data API accepts on a list call.
+// Anything above it is rejected outright, so requests are clamped rather than
+// forwarded into a 400.
+const maxPageSize = 50
+
+// pageSize resolves a caller-supplied maxResults: unset (zero or negative)
+// falls back to fallback, and oversized values are clamped to the API's limit.
+func pageSize(requested, fallback int64) int64 {
+	if requested <= 0 {
+		return fallback
+	}
+	return min(requested, maxPageSize)
+}

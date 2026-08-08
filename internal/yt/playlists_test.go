@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"google.golang.org/api/option"
@@ -109,6 +110,143 @@ func TestUpdatePlaylistMergesSnippet(t *testing.T) {
 	}
 	if got.Title != "New Title" || got.Description != "old desc" {
 		t.Errorf("got %+v", got)
+	}
+}
+
+func TestListPlaylistsClampsMaxResults(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/youtube/v3/playlists", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("maxResults"); got != "50" {
+			t.Errorf("maxResults %q, want capped value 50", got)
+		}
+		fmt.Fprint(w, `{"items": []}`)
+	})
+	if _, err := testClient(t, mux).ListPlaylists(context.Background(), 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A playlist that arrives without a snippet must not crash the server: a panic
+// in a tool handler takes down the whole process.
+func TestUpdatePlaylistWithoutSnippet(t *testing.T) {
+	var sentTitle string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/youtube/v3/playlists", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"items": [{"id": "PL1"}]}`)
+		case http.MethodPut:
+			var body struct {
+				Snippet struct {
+					Title string `json:"title"`
+				} `json:"snippet"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			sentTitle = body.Snippet.Title
+			fmt.Fprint(w, `{"id": "PL1", "snippet": {"title": "New Title"}}`)
+		}
+	})
+	title := "New Title"
+	got, err := testClient(t, mux).UpdatePlaylist(context.Background(), "PL1", &title, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sentTitle != "New Title" || got.Title != "New Title" {
+		t.Errorf("sent title %q, got %+v", sentTitle, got)
+	}
+}
+
+// Without a privacy change and without an existing status, "status" must stay
+// out of the part list rather than being sent as an empty object. part is a
+// repeated query parameter, so every value has to be read.
+func TestUpdatePlaylistOmitsAbsentStatusPart(t *testing.T) {
+	var parts []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/youtube/v3/playlists", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"items": [{"id": "PL1", "snippet": {"title": "Old"}}]}`)
+		case http.MethodPut:
+			parts = r.URL.Query()["part"]
+			fmt.Fprint(w, `{"id": "PL1", "snippet": {"title": "New"}}`)
+		}
+	})
+	title := "New"
+	if _, err := testClient(t, mux).UpdatePlaylist(context.Background(), "PL1", &title, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(parts, "status") {
+		t.Errorf("part = %v, want no status part when the playlist has none", parts)
+	}
+}
+
+func TestUpdatePlaylistSendsStatusPartWhenPrivacyChanges(t *testing.T) {
+	var parts []string
+	var privacy string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/youtube/v3/playlists", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"items": [{"id": "PL1", "snippet": {"title": "Old"}}]}`)
+		case http.MethodPut:
+			parts = r.URL.Query()["part"]
+			var body struct {
+				Status struct {
+					PrivacyStatus string `json:"privacyStatus"`
+				} `json:"status"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			privacy = body.Status.PrivacyStatus
+			fmt.Fprint(w, `{"id": "PL1", "snippet": {"title": "Old"}, "status": {"privacyStatus": "public"}}`)
+		}
+	})
+	public := "public"
+	if _, err := testClient(t, mux).UpdatePlaylist(context.Background(), "PL1", nil, nil, &public); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(parts, "status") || privacy != "public" {
+		t.Errorf("part = %v, privacyStatus = %q; want a status part carrying public", parts, privacy)
+	}
+}
+
+// playlists.update cannot return contentDetails, so the item count read
+// alongside the current snippet has to be carried into the result rather than
+// silently reported as zero.
+func TestUpdatePlaylistKeepsItemCount(t *testing.T) {
+	var sentContentDetails bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/youtube/v3/playlists", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			fmt.Fprint(w, `{"items": [{
+				"id": "PL1",
+				"snippet": {"title": "Old"},
+				"status": {"privacyStatus": "private"},
+				"contentDetails": {"itemCount": 7}
+			}]}`)
+		case http.MethodPut:
+			var body map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			_, sentContentDetails = body["contentDetails"]
+			fmt.Fprint(w, `{"id": "PL1", "snippet": {"title": "New"}, "status": {"privacyStatus": "private"}}`)
+		}
+	})
+	title := "New"
+	got, err := testClient(t, mux).UpdatePlaylist(context.Background(), "PL1", &title, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ItemCount != 7 {
+		t.Errorf("item_count = %d, want the 7 entries the playlist has", got.ItemCount)
+	}
+	if sentContentDetails {
+		t.Error("contentDetails was sent in the update body but is not a writable part")
 	}
 }
 

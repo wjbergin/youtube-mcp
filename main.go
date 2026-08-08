@@ -44,37 +44,55 @@ func main() {
 
 func serve(ctx context.Context) error {
 	server := mcp.NewServer(&mcp.Implementation{Name: "youtube-mcp", Version: version}, nil)
-	tools.Register(server, newProvider(), transcript.New())
+	tools.Register(server, newProvider(buildService, auth.TokenFingerprint), transcript.New())
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
-// newProvider builds and caches the authenticated API service on first use.
-// Failed attempts are not cached, so tools start working after the user runs
-// `youtube-mcp auth` without requiring a server restart.
+// buildService constructs the authenticated YouTube client.
 //
 // Construction deliberately uses a background context. oauth2 retains its
-// construction context for future refreshes, which must outlive the first MCP
-// request that happens to initialize the client.
-func newProvider() tools.Provider {
+// construction context for future token refreshes, which must outlive the first
+// MCP request that happens to initialize the client.
+func buildService() (tools.Service, error) {
+	client, err := auth.HTTPClient(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	youtube, err := yt.New(context.Background(), client)
+	if err != nil {
+		return nil, err
+	}
+	return youtube, nil
+}
+
+// newProvider caches the authenticated service, keyed on the fingerprint of the
+// token that produced it, and rebuilds whenever that fingerprint changes.
+//
+// Failed builds are never cached, so tools begin working once the user runs
+// `youtube-mcp auth`. Rekeying on the fingerprint covers the other direction: a
+// client built from a token that is later revoked — or whose refresh token
+// expires, which happens weekly while the OAuth app is in testing mode — holds
+// that dead token in memory. Re-running `youtube-mcp auth` rewrites the token
+// file, and the next tool call picks it up instead of demanding a restart.
+func newProvider(build func() (tools.Service, error), fingerprint func() string) tools.Provider {
 	var (
 		mu      sync.Mutex
 		service tools.Service
+		builtAt string
 	)
 	return func(context.Context) (tools.Service, error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if service != nil {
+
+		current := fingerprint()
+		if service != nil && current == builtAt {
 			return service, nil
 		}
-		client, err := auth.HTTPClient(context.Background())
+		built, err := build()
 		if err != nil {
 			return nil, err
 		}
-		youtube, err := yt.New(context.Background(), client)
-		if err != nil {
-			return nil, err
-		}
-		service = youtube
+		service, builtAt = built, current
 		return service, nil
 	}
 }

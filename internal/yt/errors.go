@@ -5,6 +5,7 @@ package yt
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"google.golang.org/api/googleapi"
@@ -19,8 +20,12 @@ func friendlyError(err error) error {
 	var gerr *googleapi.Error
 	if errors.As(err, &gerr) {
 		switch {
-		case gerr.Code == 403 && hasReason(gerr, "quotaExceeded"):
+		case hasReason(gerr, "quotaExceeded", "dailyLimitExceeded"):
 			return fmt.Errorf("YouTube API daily quota exhausted; it resets at midnight Pacific time")
+		// Throttling, not an exhausted allowance: the same 403 the daily quota
+		// uses, but the fix is a brief wait rather than waiting for the reset.
+		case hasReason(gerr, "rateLimitExceeded", "userRateLimitExceeded"):
+			return fmt.Errorf("sending requests too quickly to the YouTube API; wait a few seconds and retry")
 		case gerr.Code == 404:
 			return fmt.Errorf("not found: no playlist or video with that id")
 		case gerr.Code == 401:
@@ -34,9 +39,9 @@ func friendlyError(err error) error {
 	return err
 }
 
-func hasReason(gerr *googleapi.Error, reason string) bool {
+func hasReason(gerr *googleapi.Error, reasons ...string) bool {
 	for _, e := range gerr.Errors {
-		if e.Reason == reason {
+		if slices.Contains(reasons, e.Reason) {
 			return true
 		}
 	}

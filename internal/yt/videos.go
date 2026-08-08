@@ -7,20 +7,17 @@ import (
 	"strconv"
 )
 
-// SearchVideos searches only YouTube videos. The API caps result pages at 50;
-// zero and negative values use the quota-conscious default of 10.
-func (c *Client) SearchVideos(ctx context.Context, query string, maxResults int64) ([]SearchResult, error) {
-	if maxResults <= 0 {
-		maxResults = 10
-	}
-	if maxResults > 50 {
-		maxResults = 50
-	}
+// defaultSearchResults is deliberately below the API's page limit: a search
+// costs 100 quota units, so callers must opt in to a wider sweep.
+const defaultSearchResults = 10
 
+// SearchVideos searches only YouTube videos. Oversized requests are clamped to
+// the API's page limit; unset values use the quota-conscious default.
+func (c *Client) SearchVideos(ctx context.Context, query string, maxResults int64) ([]SearchResult, error) {
 	resp, err := c.svc.Search.List([]string{"snippet"}).
 		Q(query).
 		Type("video").
-		MaxResults(maxResults).
+		MaxResults(pageSize(maxResults, defaultSearchResults)).
 		Context(ctx).
 		Do()
 	if err != nil {

@@ -98,6 +98,31 @@ func TestLoadTokenCorruptTellsUserToAuth(t *testing.T) {
 	}
 }
 
+func TestTokenFingerprintTracksReauthentication(t *testing.T) {
+	withTempDir(t)
+	if got := TokenFingerprint(); got != "" {
+		t.Errorf("fingerprint of a missing token = %q, want empty", got)
+	}
+
+	if err := SaveToken(&oauth2.Token{AccessToken: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	first := TokenFingerprint()
+	if first == "" {
+		t.Fatal("fingerprint of a saved token must not be empty")
+	}
+	if again := TokenFingerprint(); again != first {
+		t.Errorf("fingerprint changed without a re-authentication: %q then %q", first, again)
+	}
+
+	if err := SaveToken(&oauth2.Token{AccessToken: "second"}); err != nil {
+		t.Fatal(err)
+	}
+	if after := TokenFingerprint(); after == first {
+		t.Error("fingerprint did not change after re-authentication")
+	}
+}
+
 func TestLoadOAuthConfigMissingMentionsCredentials(t *testing.T) {
 	withTempDir(t)
 	_, err := LoadOAuthConfig()

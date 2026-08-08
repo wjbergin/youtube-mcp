@@ -8,11 +8,8 @@ import (
 )
 
 func (c *Client) ListPlaylists(ctx context.Context, maxResults int64) ([]Playlist, error) {
-	if maxResults <= 0 {
-		maxResults = 50
-	}
 	resp, err := c.svc.Playlists.List([]string{"snippet", "status", "contentDetails"}).
-		Mine(true).MaxResults(maxResults).Context(ctx).Do()
+		Mine(true).MaxResults(pageSize(maxResults, maxPageSize)).Context(ctx).Do()
 	if err != nil {
 		return nil, friendlyError(err)
 	}
@@ -42,7 +39,7 @@ func (c *Client) CreatePlaylist(ctx context.Context, title, description, privacy
 // state: the API replaces the whole snippet on update, so unchanged fields
 // must be re-sent with their existing values. nil means "leave unchanged".
 func (c *Client) UpdatePlaylist(ctx context.Context, id string, title, description, privacy *string) (Playlist, error) {
-	resp, err := c.svc.Playlists.List([]string{"snippet", "status"}).Id(id).Context(ctx).Do()
+	resp, err := c.svc.Playlists.List([]string{"snippet", "status", "contentDetails"}).Id(id).Context(ctx).Do()
 	if err != nil {
 		return Playlist{}, friendlyError(err)
 	}
@@ -50,6 +47,18 @@ func (c *Client) UpdatePlaylist(ctx context.Context, id string, title, descripti
 		return Playlist{}, fmt.Errorf("not found: no playlist with id %q", id)
 	}
 	cur := resp.Items[0]
+
+	// contentDetails is readable but not writable, so the item count is kept
+	// here to fill in the update's reply and dropped from the request body.
+	itemCount := int64(0)
+	if cur.ContentDetails != nil {
+		itemCount = cur.ContentDetails.ItemCount
+	}
+	cur.ContentDetails = nil
+
+	if cur.Snippet == nil {
+		cur.Snippet = &ytapi.PlaylistSnippet{}
+	}
 	if title != nil {
 		cur.Snippet.Title = *title
 	}
@@ -62,11 +71,22 @@ func (c *Client) UpdatePlaylist(ctx context.Context, id string, title, descripti
 		}
 		cur.Status.PrivacyStatus = *privacy
 	}
-	updated, err := c.svc.Playlists.Update([]string{"snippet", "status"}, cur).Context(ctx).Do()
+
+	// Only declare the parts actually being sent: naming "status" while the
+	// playlist has none would submit an empty status object.
+	parts := []string{"snippet"}
+	if cur.Status != nil {
+		parts = append(parts, "status")
+	}
+	updated, err := c.svc.Playlists.Update(parts, cur).Context(ctx).Do()
 	if err != nil {
 		return Playlist{}, friendlyError(err)
 	}
-	return fromAPIPlaylist(updated), nil
+	out := fromAPIPlaylist(updated)
+	if updated.ContentDetails == nil {
+		out.ItemCount = itemCount
+	}
+	return out, nil
 }
 
 func (c *Client) DeletePlaylist(ctx context.Context, id string) error {

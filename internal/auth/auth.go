@@ -5,7 +5,9 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -87,6 +89,27 @@ func LoadToken() (*oauth2.Token, error) {
 		return nil, fmt.Errorf("corrupt token at %s: delete it and run `youtube-mcp auth` again", path)
 	}
 	return &token, nil
+}
+
+// TokenFingerprint identifies the cached token's current contents so a
+// long-running server can notice that `youtube-mcp auth` has replaced it and
+// rebuild its client instead of holding a dead token until restart. It returns
+// "" when no readable token exists, which callers treat as "nothing to reuse".
+//
+// The value derives from the file, not from an in-memory token: refreshed
+// access tokens are never written back, so this stays stable during normal
+// operation and changes only on re-authentication.
+func TokenFingerprint() string {
+	path, err := tokenPath()
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // SaveToken stores an OAuth token in a private configuration directory.

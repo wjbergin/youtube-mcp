@@ -10,12 +10,9 @@ import (
 // ListPlaylistItems returns one page of entries from playlistID together with
 // the token for the next page, if one exists.
 func (c *Client) ListPlaylistItems(ctx context.Context, playlistID string, maxResults int64, pageToken string) ([]PlaylistItem, string, error) {
-	if maxResults <= 0 {
-		maxResults = 50
-	}
 	call := c.svc.PlaylistItems.List([]string{"snippet"}).
 		PlaylistId(playlistID).
-		MaxResults(maxResults).
+		MaxResults(pageSize(maxResults, maxPageSize)).
 		Context(ctx)
 	if pageToken != "" {
 		call = call.PageToken(pageToken)
@@ -58,6 +55,9 @@ func (c *Client) AddVideo(ctx context.Context, playlistID, videoID string, posit
 // RemoveVideo deletes every occurrence of videoID from playlistID and returns
 // the number removed. It scans every page before deleting so pagination is not
 // disturbed by mutations while matches are being resolved.
+//
+// A deletion that fails part-way through has still changed the playlist, so the
+// count and the error both report the entries already removed.
 func (c *Client) RemoveVideo(ctx context.Context, playlistID, videoID string) (int, error) {
 	var itemIDs []string
 	pageToken := ""
@@ -80,12 +80,15 @@ func (c *Client) RemoveVideo(ctx context.Context, playlistID, videoID string) (i
 	if len(itemIDs) == 0 {
 		return 0, fmt.Errorf("video %q is not in playlist %q", videoID, playlistID)
 	}
+	removed := 0
 	for _, itemID := range itemIDs {
 		if err := c.svc.PlaylistItems.Delete(itemID).Context(ctx).Do(); err != nil {
-			return 0, friendlyError(err)
+			return removed, fmt.Errorf("removed %d of %d entries before failing: %w",
+				removed, len(itemIDs), friendlyError(err))
 		}
+		removed++
 	}
-	return len(itemIDs), nil
+	return removed, nil
 }
 
 func fromAPIItem(item *ytapi.PlaylistItem) PlaylistItem {
