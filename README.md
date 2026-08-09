@@ -60,6 +60,26 @@ claude mcp add youtube -- /absolute/path/to/youtube-mcp
 Running the binary without a subcommand defaults to its stdio MCP server. You
 can also run that mode explicitly with `youtube-mcp serve`.
 
+## Remote (HTTP)
+
+`serve --http <addr>` serves the same MCP server over Streamable HTTP at
+`/mcp` instead of stdio. Scope the bind address to a trusted interface:
+
+```bash
+./youtube-mcp serve --http <tailscale-ip>:8080
+```
+
+There is no authentication on the HTTP endpoint — run it only on a network
+you trust (e.g. bound to a Tailscale interface). Register in Claude Code
+with:
+
+```bash
+claude mcp add --transport http youtube http://<host>:8080/mcp
+```
+
+A `Dockerfile` is included; the container runs this mode and expects the
+OAuth files mounted read-only at `/home/app/.config/youtube-mcp`.
+
 ## Development
 
 Run the local verification suite with:
