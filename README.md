@@ -98,6 +98,24 @@ unofficial transcript endpoint:
 go test -tags smoke ./smoke -v
 ```
 
+## Releases
+
+Pushing a `v*` tag builds macOS and Linux binaries (arm64 and amd64 each) and
+publishes them as a GitHub release:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The tag is the source of truth for the version: the workflow strips the leading
+`v` and injects the rest with `-ldflags "-X main.version=..."`, which is what
+MCP clients see in the initialize handshake. `main.go`'s default applies only to
+local `go build`. Tests must pass before any binary is built.
+
+Each archive carries the binary and this README; `checksums.txt` covers all of
+them and is verified with `shasum -a 256 -c checksums.txt`.
+
 ## Quota
 
 The Data API's default free quota is 10,000 units per day. Reads generally cost
