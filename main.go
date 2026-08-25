@@ -21,7 +21,10 @@ import (
 	"youtube-mcp/internal/yt"
 )
 
-const version = "0.1.0"
+// version is reported to MCP clients in the initialize handshake. Release
+// builds overwrite it with the git tag via -ldflags "-X main.version=...",
+// which only works on a var, so this must not become a const.
+var version = "0.1.0"
 
 func main() {
 	command := "serve"

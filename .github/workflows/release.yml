@@ -1,0 +1,98 @@
+name: release
+
+# Publishes cross-compiled binaries whenever a v* tag is pushed:
+#
+#	git tag v0.2.0 && git push origin v0.2.0
+#
+# The tag drives the version reported in the MCP initialize handshake, so the
+# tag is the single source of truth — main.go's default only applies to local
+# `go build` (see the comment on main.version).
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # Gate the release on the same checks the README documents for local work.
+  # The smoke suite is deliberately excluded: it is behind the `smoke` build
+  # tag and needs live OAuth credentials that CI has no business holding.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dist="youtube-mcp_${version}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/${dist}"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${version}" \
+            -o "dist/${dist}/youtube-mcp" .
+          cp README.md "dist/${dist}/"
+          tar -czf "dist/${dist}.tar.gz" -C dist "${dist}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: youtube-mcp_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # One checksums file covering every archive, so a download can be
+      # verified with `shasum -a 256 -c checksums.txt`.
+      - name: Checksums
+        run: |
+          cd dist
+          shasum -a 256 *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*.tar.gz dist/checksums.txt
