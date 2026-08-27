@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -21,10 +22,53 @@ import (
 	"youtube-mcp/internal/yt"
 )
 
-// version is reported to MCP clients in the initialize handshake. Release
-// builds overwrite it with the git tag via -ldflags "-X main.version=...",
-// which only works on a var, so this must not become a const.
-var version = "0.1.0"
+// version carries the release number reported to MCP clients in the initialize
+// handshake. Release builds set it from the git tag via -ldflags
+// "-X main.version=...", which only works on a var, so this must not become a
+// const. It stays empty everywhere else; resolveVersion supplies the fallback.
+var version = ""
+
+// devVersion prefixes the identifier reported by any build that was not stamped
+// with a release tag.
+const devVersion = "dev"
+
+// resolveVersion reports the injected release version when there is one, and
+// otherwise derives an identifier from the VCS stamp that Go embeds in any
+// binary built inside the repository.
+//
+// A hardcoded default would be worse than useless here: every local build would
+// claim the same release number no matter which commit produced it, so a client
+// showing that number tells you nothing about what is actually running.
+func resolveVersion(injected string, readBuildInfo func() (*debug.BuildInfo, bool)) string {
+	if injected != "" {
+		return injected
+	}
+	info, ok := readBuildInfo()
+	if !ok {
+		return devVersion
+	}
+
+	var revision string
+	var modified bool
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if revision == "" { // built with -buildvcs=false, or outside a repository
+		return devVersion
+	}
+	if len(revision) > 12 {
+		revision = revision[:12]
+	}
+	if modified {
+		return devVersion + "-" + revision + "-dirty"
+	}
+	return devVersion + "-" + revision
+}
 
 func main() {
 	command := "serve"
@@ -67,7 +111,8 @@ func serve(ctx context.Context, httpAddr string) error {
 // newServer builds the MCP server exactly as stdio mode always has; both
 // transports share one instance (the provider cache is mutex-guarded).
 func newServer() *mcp.Server {
-	server := mcp.NewServer(&mcp.Implementation{Name: "youtube-mcp", Version: version}, nil)
+	reported := resolveVersion(version, debug.ReadBuildInfo)
+	server := mcp.NewServer(&mcp.Implementation{Name: "youtube-mcp", Version: reported}, nil)
 	tools.Register(server, newProvider(buildService, auth.TokenFingerprint), transcript.New())
 	return server
 }

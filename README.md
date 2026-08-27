@@ -110,8 +110,14 @@ git push origin v0.2.0
 
 The tag is the source of truth for the version: the workflow strips the leading
 `v` and injects the rest with `-ldflags "-X main.version=..."`, which is what
-MCP clients see in the initialize handshake. `main.go`'s default applies only to
-local `go build`. Tests must pass before any binary is built.
+MCP clients see in the initialize handshake. Tests must pass before any binary
+is built.
+
+Builds without that flag report the commit they were built from instead, taken
+from the VCS stamp Go embeds automatically: `dev-368d7fa1b2c3`, with a `-dirty`
+suffix when the working tree had uncommitted changes. So the version a client
+shows always identifies the binary actually running, whether it came from a
+release or from `go build` on your machine.
 
 Each archive carries the binary and this README; `checksums.txt` covers all of
 them and is verified with `shasum -a 256 -c checksums.txt`.

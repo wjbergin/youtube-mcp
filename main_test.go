@@ -4,12 +4,72 @@ import (
 	"context"
 	"fmt"
 	"net/http/httptest"
+	"runtime/debug"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"youtube-mcp/internal/tools"
 )
+
+// buildInfo fakes the VCS stamp Go embeds at build time.
+func buildInfo(settings map[string]string) func() (*debug.BuildInfo, bool) {
+	info := &debug.BuildInfo{}
+	for key, value := range settings {
+		info.Settings = append(info.Settings, debug.BuildSetting{Key: key, Value: value})
+	}
+	return func() (*debug.BuildInfo, bool) { return info, true }
+}
+
+// The version reported in the initialize handshake has to distinguish a tagged
+// release from a local build, and a clean local build from a dirty one, or it
+// cannot be used to tell which binary a client is actually running.
+func TestResolveVersion(t *testing.T) {
+	clean := map[string]string{"vcs.revision": "368d7fa1b2c3d4e5f60718293a4b5c6d7e8f9a0b", "vcs.modified": "false"}
+	dirty := map[string]string{"vcs.revision": "368d7fa1b2c3d4e5f60718293a4b5c6d7e8f9a0b", "vcs.modified": "true"}
+
+	tests := []struct {
+		name     string
+		injected string
+		readInfo func() (*debug.BuildInfo, bool)
+		want     string
+	}{
+		{
+			name:     "release tag wins over the VCS stamp",
+			injected: "0.2.0",
+			readInfo: buildInfo(clean),
+			want:     "0.2.0",
+		},
+		{
+			name:     "local build reports its commit",
+			readInfo: buildInfo(clean),
+			want:     "dev-368d7fa1b2c3",
+		},
+		{
+			name:     "uncommitted changes are flagged",
+			readInfo: buildInfo(dirty),
+			want:     "dev-368d7fa1b2c3-dirty",
+		},
+		{
+			name:     "no VCS stamp degrades to a bare dev marker",
+			readInfo: buildInfo(map[string]string{}),
+			want:     "dev",
+		},
+		{
+			name:     "unreadable build info degrades to a bare dev marker",
+			readInfo: func() (*debug.BuildInfo, bool) { return nil, false },
+			want:     "dev",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := resolveVersion(test.injected, test.readInfo); got != test.want {
+				t.Errorf("resolveVersion() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 
 // stubService stands in for an authenticated client. The embedded nil
 // interface satisfies tools.Service; the provider never calls a method on it.
