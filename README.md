@@ -60,6 +60,35 @@ claude mcp add youtube -- /absolute/path/to/youtube-mcp
 Running the binary without a subcommand defaults to its stdio MCP server. You
 can also run that mode explicitly with `youtube-mcp serve`.
 
+### 4. Register with Claude Desktop
+
+Claude Desktop has no equivalent of `claude mcp add`; it reads its servers from
+`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS. Add
+an entry under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "youtube": {
+      "command": "/absolute/path/to/youtube-mcp"
+    }
+  }
+}
+```
+
+Neither `args` nor `env` is needed. The bare binary defaults to stdio `serve`,
+and it reads its OAuth files from `~/.config/youtube-mcp` on its own.
+
+Two details are specific to Desktop:
+
+- Quit Desktop before editing the file (Cmd+Q, not just closing the window).
+  Desktop keeps its own `preferences` in that same file and rewrites it,
+  which can discard edits made while it is running.
+- The path must be absolute. Desktop does not launch servers through a login
+  shell, so `~` is not expanded and your usual `PATH` does not apply.
+
+Relaunch Desktop afterwards and the tools appear once the handshake completes.
+
 ## Remote (HTTP)
 
 `serve --http <addr>` serves the same MCP server over Streamable HTTP at
