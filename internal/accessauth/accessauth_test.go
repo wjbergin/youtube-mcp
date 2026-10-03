@@ -149,8 +149,9 @@ func TestRejectsInvalidTokens(t *testing.T) {
 
 	// Algorithm confusion: an HMAC-signed token using the same kid as the
 	// published RSA key, with the RSA public key's bytes nowhere involved.
-	// The verifier must only ever accept RS256, never fall back to treating
-	// a public key as an HMAC secret.
+	// The verifier must reject it for using an unsupported algorithm (checked
+	// below), not merely because the HMAC key happens to be the wrong type
+	// for the RSA key set.
 	hmacKey := jose.JSONWebKey{Key: []byte("not-the-real-secret-but-32-bytes"), KeyID: "k1", Algorithm: "HS256"}
 
 	cases := map[string]string{
@@ -163,14 +164,24 @@ func TestRejectsInvalidTokens(t *testing.T) {
 		"HS256 alg confusion": sign(t, hmacKey, valid),
 	}
 	handler := ti.gated()
+
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(orig) })
+
 	for name, token := range cases {
 		t.Run(name, func(t *testing.T) {
+			buf.Reset()
 			rec := request(handler, token)
 			if rec.Code != http.StatusUnauthorized {
 				t.Fatalf("got %d, want 401", rec.Code)
 			}
 			if rec.Body.Len() != 0 {
 				t.Fatalf("rejection body must be empty, got %q", rec.Body.String())
+			}
+			if name == "HS256 alg confusion" && !strings.Contains(buf.String(), "unexpected signature algorithm") {
+				t.Fatalf("expected rejection reason to cite the unsupported algorithm, got %q", buf.String())
 			}
 		})
 	}

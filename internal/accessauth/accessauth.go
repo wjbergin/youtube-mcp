@@ -54,10 +54,11 @@ func (c Config) certsURL() string { return c.issuer() + "/cdn-cgi/access/certs" 
 // Anything else gets a 401 with an empty body.
 //
 // Keys are fetched lazily and cached; a token whose kid is not in the cache
-// triggers a re-fetch, which handles Access key rotation. ctx scopes those
-// fetches. Fetches use cfg.HTTPClient (or a 10s-timeout default) so a
-// stalled or unreachable certs endpoint fails requests instead of hanging
-// them.
+// triggers a re-fetch, which handles Access key rotation. go-oidc fetches
+// those keys through context.WithoutCancel(ctx), so ctx only supplies
+// values to the fetch and cancelling it does not stop one in flight.
+// Fetches use cfg.HTTPClient (or a 10s-timeout default) so a stalled or
+// unreachable certs endpoint fails requests instead of hanging them.
 func Middleware(ctx context.Context, cfg Config) func(http.Handler) http.Handler {
 	client := cfg.HTTPClient
 	if client == nil {
