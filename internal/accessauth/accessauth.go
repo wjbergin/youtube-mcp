@@ -1,0 +1,99 @@
+// Package accessauth gates HTTP handlers on a valid Cloudflare Access JWT.
+//
+// Cloudflare Access authenticates users at the edge (here via Managed OAuth)
+// and forwards each allowed request with a signed JWT in the
+// Cf-Access-Jwt-Assertion header. Verifying that JWT at the origin means a
+// request that skipped Access — a misrouted tunnel hostname, or a process on
+// the host calling the loopback port — is rejected instead of trusted.
+package accessauth
+
+import (
+	"context"
+	"errors"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+)
+
+// HeaderName is the header Cloudflare Access sets on requests it forwards.
+const HeaderName = "Cf-Access-Jwt-Assertion"
+
+// Config identifies the Access application whose tokens are accepted.
+type Config struct {
+	// TeamDomain is the Zero Trust team domain as a bare host,
+	// e.g. "bergin-homelab.cloudflareaccess.com".
+	TeamDomain string
+	// AUD is the Access application's Audience (AUD) tag.
+	AUD string
+	// HTTPClient is used to fetch the team's signing keys; nil means a
+	// client with a 10s timeout.
+	HTTPClient *http.Client
+}
+
+// Validate reports whether the config is complete and well formed.
+func (c Config) Validate() error {
+	if c.TeamDomain == "" || c.AUD == "" {
+		return errors.New("access auth: team domain and AUD tag are both required")
+	}
+	if strings.Contains(c.TeamDomain, "/") {
+		return errors.New("access auth: team domain must be a bare host, not a URL")
+	}
+	return nil
+}
+
+func (c Config) issuer() string { return "https://" + c.TeamDomain }
+
+func (c Config) certsURL() string { return c.issuer() + "/cdn-cgi/access/certs" }
+
+// Middleware returns a wrapper that passes only requests carrying a valid
+// Access JWT for cfg: signature checked against the team's published keys,
+// issuer equal to the team domain, AUD tag present in aud, and not expired.
+// Anything else gets a 401 with an empty body.
+//
+// Keys are fetched lazily and cached; a token whose kid is not in the cache
+// triggers a re-fetch, which handles Access key rotation. go-oidc fetches
+// those keys through context.WithoutCancel(ctx), so ctx only supplies
+// values to the fetch and cancelling it does not stop one in flight.
+// Fetches use cfg.HTTPClient (or a 10s-timeout default) so a stalled or
+// unreachable certs endpoint fails requests instead of hanging them.
+func Middleware(ctx context.Context, cfg Config) func(http.Handler) http.Handler {
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	keys := oidc.NewRemoteKeySet(oidc.ClientContext(ctx, client), cfg.certsURL())
+	verifier := oidc.NewVerifier(cfg.issuer(), keys, &oidc.Config{ClientID: cfg.AUD})
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			token := r.Header.Get(HeaderName)
+			if token == "" {
+				reject(w, r, "missing "+HeaderName)
+				return
+			}
+			if _, err := verifier.Verify(r.Context(), token); err != nil {
+				reject(w, r, err.Error())
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// maxReasonLen caps the logged rejection reason. go-oidc's JWKS fetch
+// errors embed the full HTTP response body, which could be a large
+// Cloudflare HTML error page rather than a short message.
+const maxReasonLen = 200
+
+// reject logs why a request was refused — never the token itself — and
+// answers 401 without a body.
+func reject(w http.ResponseWriter, r *http.Request, reason string) {
+	if len(reason) > maxReasonLen {
+		reason = reason[:maxReasonLen] + "…"
+	}
+	log.Printf("access auth: rejected %s %s from %s: %s", r.Method, r.URL.Path, r.RemoteAddr, reason)
+	w.WriteHeader(http.StatusUnauthorized)
+}

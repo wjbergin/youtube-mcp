@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"runtime/debug"
 	"testing"
@@ -180,7 +181,7 @@ func TestProviderRebuildsAfterReauthentication(t *testing.T) {
 // tools exercises initialize + tools/list without touching YouTube auth (the
 // provider is lazy — nothing builds the client until a tool call).
 func TestHTTPHandlerServesMCP(t *testing.T) {
-	ts := httptest.NewServer(newHTTPHandler(newServer()))
+	ts := httptest.NewServer(newHTTPHandler(newServer(), nil))
 	defer ts.Close()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
@@ -205,5 +206,74 @@ func TestHTTPHandlerServesMCP(t *testing.T) {
 		if !names[want] {
 			t.Errorf("tool %q not exposed over HTTP; got %v", want, result.Tools)
 		}
+	}
+}
+
+func env(values map[string]string) func(string) string {
+	return func(key string) string { return values[key] }
+}
+
+// HTTP mode must refuse to start without Access config: a missing env var in
+// the compose file would otherwise serve every tool to anyone who reaches the
+// port.
+func TestAccessGateRequiresConfig(t *testing.T) {
+	for name, values := range map[string]map[string]string{
+		"nothing set":      {},
+		"only team domain": {"ACCESS_TEAM_DOMAIN": "team.cloudflareaccess.com"},
+		"only aud":         {"ACCESS_AUD": "abc"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gate, err := accessGate(context.Background(), env(values), false)
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if gate != nil {
+				t.Fatal("expected no gate alongside the error")
+			}
+		})
+	}
+}
+
+func TestAccessGateBuiltFromEnv(t *testing.T) {
+	gate, err := accessGate(context.Background(), env(map[string]string{
+		"ACCESS_TEAM_DOMAIN": "team.cloudflareaccess.com",
+		"ACCESS_AUD":         "abc",
+	}), false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gate == nil {
+		t.Fatal("expected a gate")
+	}
+}
+
+func TestAccessGateDisabledExplicitly(t *testing.T) {
+	gate, err := accessGate(context.Background(), env(nil), true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gate != nil {
+		t.Fatal("--no-access-auth must not install a gate")
+	}
+}
+
+// The gate must sit in front of /mcp: a gate that denies everything has to
+// make the MCP handshake fail.
+func TestHTTPHandlerAppliesGate(t *testing.T) {
+	deny := func(http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		})
+	}
+	ts := httptest.NewServer(newHTTPHandler(newServer(), deny))
+	defer ts.Close()
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0.0.0"}, nil)
+	session, err := client.Connect(context.Background(), &mcp.StreamableClientTransport{
+		Endpoint: ts.URL + "/mcp",
+	}, nil)
+	if err == nil {
+		session.Close()
+		t.Fatal("connected through a gate that denies every request")
 	}
 }
