@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 )
@@ -27,6 +28,9 @@ type Config struct {
 	TeamDomain string
 	// AUD is the Access application's Audience (AUD) tag.
 	AUD string
+	// HTTPClient is used to fetch the team's signing keys; nil means a
+	// client with a 10s timeout.
+	HTTPClient *http.Client
 }
 
 // Validate reports whether the config is complete and well formed.
@@ -51,9 +55,15 @@ func (c Config) certsURL() string { return c.issuer() + "/cdn-cgi/access/certs" 
 //
 // Keys are fetched lazily and cached; a token whose kid is not in the cache
 // triggers a re-fetch, which handles Access key rotation. ctx scopes those
-// fetches and may carry an HTTP client via oidc.ClientContext.
+// fetches. Fetches use cfg.HTTPClient (or a 10s-timeout default) so a
+// stalled or unreachable certs endpoint fails requests instead of hanging
+// them.
 func Middleware(ctx context.Context, cfg Config) func(http.Handler) http.Handler {
-	keys := oidc.NewRemoteKeySet(ctx, cfg.certsURL())
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	keys := oidc.NewRemoteKeySet(oidc.ClientContext(ctx, client), cfg.certsURL())
 	verifier := oidc.NewVerifier(cfg.issuer(), keys, &oidc.Config{ClientID: cfg.AUD})
 
 	return func(next http.Handler) http.Handler {
@@ -72,9 +82,17 @@ func Middleware(ctx context.Context, cfg Config) func(http.Handler) http.Handler
 	}
 }
 
+// maxReasonLen caps the logged rejection reason. go-oidc's JWKS fetch
+// errors embed the full HTTP response body, which could be a large
+// Cloudflare HTML error page rather than a short message.
+const maxReasonLen = 200
+
 // reject logs why a request was refused — never the token itself — and
 // answers 401 without a body.
 func reject(w http.ResponseWriter, r *http.Request, reason string) {
+	if len(reason) > maxReasonLen {
+		reason = reason[:maxReasonLen] + "…"
+	}
 	log.Printf("access auth: rejected %s %s from %s: %s", r.Method, r.URL.Path, r.RemoteAddr, reason)
 	w.WriteHeader(http.StatusUnauthorized)
 }

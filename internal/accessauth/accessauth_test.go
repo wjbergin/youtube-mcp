@@ -1,10 +1,12 @@
 package accessauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
 	jose "github.com/go-jose/go-jose/v4"
 )
 
@@ -83,7 +84,11 @@ func (ti *testIssuer) claims(aud string, exp time.Time) map[string]any {
 
 func sign(t *testing.T, key jose.JSONWebKey, claims map[string]any) string {
 	t.Helper()
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key}, (&jose.SignerOptions{}).WithType("JWT"))
+	// go-jose only auto-embeds "kid" for asymmetric keys (it derives the
+	// header from the key's own public half); an HMAC key has no public
+	// half, so set "kid" explicitly to cover both cases uniformly.
+	opts := (&jose.SignerOptions{}).WithType("JWT").WithHeader(jose.HeaderKey("kid"), key.KeyID)
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.SignatureAlgorithm(key.Algorithm), Key: key}, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +108,10 @@ func sign(t *testing.T, key jose.JSONWebKey, claims map[string]any) string {
 }
 
 // gated wraps a handler that answers 200 in the middleware under test. The
-// context carries the test server's TLS client so the key set can fetch.
+// config's HTTPClient is the test server's TLS client so the key set can
+// fetch from it despite the self-signed cert.
 func (ti *testIssuer) gated() http.Handler {
-	ctx := oidc.ClientContext(context.Background(), ti.server.Client())
-	gate := Middleware(ctx, Config{TeamDomain: ti.teamDomain(), AUD: testAUD})
+	gate := Middleware(context.Background(), Config{TeamDomain: ti.teamDomain(), AUD: testAUD, HTTPClient: ti.server.Client()})
 	return gate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -142,13 +147,20 @@ func TestRejectsInvalidTokens(t *testing.T) {
 	wrongIssuer := ti.claims(testAUD, time.Now().Add(time.Hour))
 	wrongIssuer["iss"] = "https://evil.example.com"
 
+	// Algorithm confusion: an HMAC-signed token using the same kid as the
+	// published RSA key, with the RSA public key's bytes nowhere involved.
+	// The verifier must only ever accept RS256, never fall back to treating
+	// a public key as an HMAC secret.
+	hmacKey := jose.JSONWebKey{Key: []byte("not-the-real-secret-but-32-bytes"), KeyID: "k1", Algorithm: "HS256"}
+
 	cases := map[string]string{
-		"missing header": "",
-		"not a JWT":      "garbage",
-		"bad signature":  sign(t, forged, valid),
-		"expired":        sign(t, published, ti.claims(testAUD, time.Now().Add(-time.Hour))),
-		"wrong audience": sign(t, published, ti.claims("some-other-app", time.Now().Add(time.Hour))),
-		"wrong issuer":   sign(t, published, wrongIssuer),
+		"missing header":      "",
+		"not a JWT":           "garbage",
+		"bad signature":       sign(t, forged, valid),
+		"expired":             sign(t, published, ti.claims(testAUD, time.Now().Add(-time.Hour))),
+		"wrong audience":      sign(t, published, ti.claims("some-other-app", time.Now().Add(time.Hour))),
+		"wrong issuer":        sign(t, published, wrongIssuer),
+		"HS256 alg confusion": sign(t, hmacKey, valid),
 	}
 	handler := ti.gated()
 	for name, token := range cases {
@@ -182,6 +194,105 @@ func TestUnknownKeyIDTriggersRefetch(t *testing.T) {
 	}
 	if ti.fetchCount() <= fetchesBefore {
 		t.Fatalf("expected a JWKS re-fetch for the unknown kid; fetches stayed at %d", fetchesBefore)
+	}
+}
+
+// If Access's certs endpoint is simply down, the fetch must fail fast with a
+// plain connection error rather than hang.
+func TestUnreachableCertsEndpointRejects(t *testing.T) {
+	ti := newTestIssuer(t)
+	key := ti.newKey(t, "k1", true)
+	token := sign(t, key, ti.claims(testAUD, time.Now().Add(time.Hour)))
+	handler := ti.gated()
+
+	ti.server.Close() // simulate the certs endpoint being unreachable
+
+	rec := request(handler, token)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("rejection body must be empty, got %q", rec.Body.String())
+	}
+}
+
+// If Access's certs endpoint accepts the connection but never responds, the
+// bounded HTTPClient must still cut the fetch off instead of hanging the
+// request (and the inflight JWKS fetch) forever.
+func TestStalledCertsEndpointRejectsPromptly(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	// t.Cleanup runs LIFO: register Close first (runs last) and the release
+	// second (runs first), so the stalled handler unblocks and returns
+	// before Close waits for outstanding requests to finish.
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+
+	client := server.Client()
+	client.Timeout = 200 * time.Millisecond
+
+	teamDomain := strings.TrimPrefix(server.URL, "https://")
+	gate := Middleware(context.Background(), Config{TeamDomain: teamDomain, AUD: testAUD, HTTPClient: client})
+	handler := gate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// The token's shape only needs to be valid enough to reach the key
+	// fetch; the stalled server never serves a JWKS to verify against.
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := jose.JSONWebKey{Key: priv, KeyID: "k1", Algorithm: "RS256"}
+	token := sign(t, key, map[string]any{
+		"iss": server.URL,
+		"aud": []string{testAUD},
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+
+	start := time.Now()
+	rec := request(handler, token)
+	elapsed := time.Since(start)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("rejection body must be empty, got %q", rec.Body.String())
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("request took %v, want it to fail within ~2s of the 200ms client timeout", elapsed)
+	}
+}
+
+// go-oidc's fetch errors can embed the full HTTP response body (e.g. a large
+// Cloudflare HTML error page), so the logged reason must be capped.
+func TestRejectReasonTruncated(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(orig) })
+
+	longReason := strings.Repeat("x", 500)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	rec := httptest.NewRecorder()
+
+	reject(rec, req, longReason)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want 401", rec.Code)
+	}
+	logged := buf.String()
+	if strings.Contains(logged, longReason) {
+		t.Fatalf("expected the long reason to be truncated, but it was logged in full: %q", logged)
+	}
+	if !strings.Contains(logged, "…") {
+		t.Fatalf("expected a truncation marker in the logged reason, got %q", logged)
 	}
 }
 
