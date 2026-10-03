@@ -1,7 +1,7 @@
 // youtube-mcp is an MCP server for managing YouTube playlists and fetching
 // video transcripts. Its auth subcommand performs one-time browser sign-in;
 // serve (the default) runs the stdio MCP server; `serve --http <addr>` serves
-// Streamable HTTP instead.
+// Streamable HTTP instead, behind a Cloudflare Access JWT check.
 package main
 
 import (
@@ -16,6 +16,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"youtube-mcp/internal/accessauth"
 	"youtube-mcp/internal/auth"
 	"youtube-mcp/internal/tools"
 	"youtube-mcp/internal/transcript"
@@ -81,12 +82,13 @@ func main() {
 	case "serve":
 		flags := flag.NewFlagSet("serve", flag.ExitOnError)
 		httpAddr := flags.String("http", "", "listen address for Streamable HTTP, e.g. :8080 (default: stdio)")
+		noAccessAuth := flags.Bool("no-access-auth", false, "serve HTTP without Cloudflare Access JWT checks (local development only)")
 		var args []string
 		if len(os.Args) > 2 {
 			args = os.Args[2:]
 		}
 		flags.Parse(args)
-		if err := serve(ctx, *httpAddr); err != nil {
+		if err := serve(ctx, *httpAddr, *noAccessAuth); err != nil {
 			log.Fatal(err)
 		}
 	case "auth":
@@ -94,18 +96,40 @@ func main() {
 			log.Fatal(err)
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "usage: youtube-mcp [serve [--http addr]|auth]")
+		fmt.Fprintln(os.Stderr, "usage: youtube-mcp [serve [--http addr [--no-access-auth]]|auth]")
 		os.Exit(2)
 	}
 }
 
-func serve(ctx context.Context, httpAddr string) error {
+func serve(ctx context.Context, httpAddr string, noAccessAuth bool) error {
 	server := newServer()
-	if httpAddr != "" {
-		log.Printf("listening on %s (MCP endpoint: /mcp)", httpAddr)
-		return http.ListenAndServe(httpAddr, newHTTPHandler(server))
+	if httpAddr == "" {
+		return server.Run(ctx, &mcp.StdioTransport{})
 	}
-	return server.Run(ctx, &mcp.StdioTransport{})
+	gate, err := accessGate(ctx, os.Getenv, noAccessAuth)
+	if err != nil {
+		return err
+	}
+	log.Printf("listening on %s (MCP endpoint: /mcp)", httpAddr)
+	return http.ListenAndServe(httpAddr, newHTTPHandler(server, gate))
+}
+
+// accessGate builds the Cloudflare Access JWT check for HTTP mode from
+// ACCESS_TEAM_DOMAIN and ACCESS_AUD. It fails closed: missing config is an
+// error, not an open server. Only an explicit --no-access-auth returns no gate.
+func accessGate(ctx context.Context, getenv func(string) string, disabled bool) (func(http.Handler) http.Handler, error) {
+	if disabled {
+		log.Print("WARNING: --no-access-auth set; /mcp accepts unauthenticated requests")
+		return nil, nil
+	}
+	cfg := accessauth.Config{
+		TeamDomain: getenv("ACCESS_TEAM_DOMAIN"),
+		AUD:        getenv("ACCESS_AUD"),
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("%w (set ACCESS_TEAM_DOMAIN and ACCESS_AUD, or pass --no-access-auth for local development)", err)
+	}
+	return accessauth.Middleware(ctx, cfg), nil
 }
 
 // newServer builds the MCP server exactly as stdio mode always has; both
@@ -117,8 +141,13 @@ func newServer() *mcp.Server {
 	return server
 }
 
-func newHTTPHandler(server *mcp.Server) http.Handler {
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+// newHTTPHandler mounts the Streamable HTTP handler at /mcp, behind gate when
+// one is given.
+func newHTTPHandler(server *mcp.Server, gate func(http.Handler) http.Handler) http.Handler {
+	var handler http.Handler = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+	if gate != nil {
+		handler = gate(handler)
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", handler)
 	return mux
