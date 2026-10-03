@@ -92,22 +92,42 @@ Relaunch Desktop afterwards and the tools appear once the handshake completes.
 ## Remote (HTTP)
 
 `serve --http <addr>` serves the same MCP server over Streamable HTTP at
-`/mcp` instead of stdio. Scope the bind address to a trusted interface:
+`/mcp` instead of stdio. It is meant to sit behind
+[Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/access-controls/):
+every request must carry a valid Access JWT in `Cf-Access-Jwt-Assertion`, or
+it gets `401`. The token's signature, issuer, audience and expiry are checked
+against your team's published keys.
+
+Required environment in HTTP mode — the server refuses to start without them:
+
+| Variable | Example |
+|---|---|
+| `ACCESS_TEAM_DOMAIN` | `myteam.cloudflareaccess.com` (bare host, no scheme) |
+| `ACCESS_AUD` | the Access application's AUD tag |
 
 ```bash
-./youtube-mcp serve --http <tailscale-ip>:8080
+ACCESS_TEAM_DOMAIN=myteam.cloudflareaccess.com ACCESS_AUD=<aud-tag> \
+  ./youtube-mcp serve --http 127.0.0.1:8080
 ```
 
-There is no authentication on the HTTP endpoint — run it only on a network
-you trust (e.g. bound to a Tailscale interface). Register in Claude Code
-with:
+To use it as a claude.ai custom connector, put the hostname behind an Access
+application with Managed OAuth enabled, and allow Claude's redirect URIs
+(`https://claude.ai/api/mcp/auth_callback`) for dynamic client registration.
+Claude Code can then register it with:
 
 ```bash
-claude mcp add --transport http youtube http://<host>:8080/mcp
+claude mcp add --transport http youtube https://<host>/mcp
 ```
 
-A `Dockerfile` is included; the container runs this mode and expects the
-OAuth files mounted read-only at `/home/app/.config/youtube-mcp`.
+For local development only, `--no-access-auth` disables the check:
+
+```bash
+./youtube-mcp serve --http 127.0.0.1:8080 --no-access-auth
+```
+
+A `Dockerfile` is included; the container runs `serve --http :8080`, takes
+the two variables from its environment (compose file or `docker run -e`), and
+expects the OAuth files mounted read-only at `/home/app/.config/youtube-mcp`.
 
 ## Development
 
